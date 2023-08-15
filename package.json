@@ -12,6 +12,8 @@
   "dependencies": {
     "axios": "^1.4.0",
     "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.3.1",
+    "google-search-results-nodejs": "^2.1.0",
     "lodash": "^4.17.21",
     "most-common-words-by-language": "^3.0.13"
   }
