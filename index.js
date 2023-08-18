@@ -1,142 +1,77 @@
-const axios = require("axios")
-const cheerio = require("cheerio")
-const {getWordsList} = require('most-common-words-by-language')
-const {uniq, take} = require("lodash")
-const {getBestOccurrences, splitText} = require("./utils")
+const fs = require('fs')
+const csv = require('csv-parser')
+const createCsvWriter = require('csv-writer').createObjectCsvWriter
 
-const englishWords = getWordsList("english", 1000)
+require('dotenv').config()
 
-const commonWords = [
-    ...englishWords,
-    "yours",
-    "the",
-    "and",
-    "for",
-    "from",
-    "are",
-    "is",
-    "as",
-    "that",
-    "with",
-    "without",
-    "you",
-    "no",
-    "not",
-    "a",
-    "an",
-    "do",
-    "dont",
-    "your",
-    "the",
-    "there",
-    "by",
-    "at",
-    "and",
-    "so",
-    "if",
-    "than",
-    "but",
-    "about",
-    "in",
-    "on",
-    "the",
-    "was",
-    "for",
-    "that",
-    "said",
-    "a",
-    "or",
-    "of",
-    "to",
-    "there",
-    "will",
-    "be",
-    "what",
-    "get",
-    "go",
-    "think",
-    "just",
-    "every",
-    "nothing",
-    "are",
-    "it",
-    "were",
-    "had",
-    "i",
-    "very",
-]
+const { googleKeywordSocialResultsCounts } = require('./getSearchResults')
+const {channels, CONCURRENCY_LIMIT, BATCH_SIZE} = require("./constants")
 
-const validWordRegex = /\w{3,}/i
+const readKeywordsFromCSV = async (filePath) => {
+    const keywords = [];
 
-const getWebsiteEntities = async (url) => {
-    if (typeof url !== "string" || url.length < 3) {
-        throw new Error("Provide a valid url")
-    }
-
-    let result = []
-
-    let html
-
-    try {
-        const res = await axios.get(url, {
-            headers: {
-                "Accept": "text/html"
-            }
-        })
-        html = res.data
-    } catch (e) {
-        throw new Error("Network error")
-    }
-
-    const $ = cheerio.load(html)
-
-    // parse meta title, description, and keywords
-    const title = $("title").first().text()
-    const description = $('meta[name="description"]').attr("content") || ""
-    const keywords = $('meta[name="keywords"]').attr("content") || ""
-
-    // populate the result with a keyword
-    result.push(...take((splitText(keywords)), 1))
-
-    const text = (title + " " + description).toLowerCase()
-    let words = splitText(text)
-
-    words = words.filter((v) => !commonWords.includes(v) && validWordRegex.test(v))
-
-    const titleWords = getBestOccurrences(words, 2)
-
-    // populate the result with words from title and description
-    result.push(...titleWords)
-
-    let bodyWords = []
-
-    $("h1,h2,h3,strong,em").each((i, el) => {
-        let words = splitText($(el).text().toLowerCase())
-
-        if (words.length <= 3) {
-            bodyWords.push(words.join(" "))
-        } else {
-            bodyWords.push(...words)
-        }
+    return new Promise((resolve, reject) => {
+        fs.createReadStream(filePath)
+            .pipe(csv())
+            .on('data', (row) => keywords.push(row.keyword))
+            .on('end', () => resolve(keywords))
+            .on('error', reject)
     })
+}
 
-    bodyWords = bodyWords.filter((v) => !commonWords.includes(v) && validWordRegex.test(v))
+const initializeOutputFileWithHeaders = async (filePath) => {
+    const csvWriter = createCsvWriter({
+        path: filePath,
+        header: [
+            {id: 'keyword', title: 'KEYWORD'},
+            ...channels.map(channel => ({id: channel.toLowerCase(), title: channel.toUpperCase()}))
+        ],
+        alwaysQuote: true
+    })
+    return csvWriter.writeRecords([])
+}
 
-    bodyWords = getBestOccurrences(bodyWords)
+const appendResultsToCSV = async (filePath, data) => {
+    const csvWriter = createCsvWriter({
+        path: filePath,
+        header: [
+            {id: 'keyword', title: 'KEYWORD'},
+            ...channels.map(channel => ({id: channel.toLowerCase(), title: channel.toUpperCase()}))
+        ],
+        append: true,
+        alwaysQuote: true
+    })
+    return csvWriter.writeRecords([data])
+}
 
-    // populate the result with words from the page
-    result.push(...bodyWords)
+const processKeywordsAndAppendResults = async (inputPath, outputPath) => {
+    //Initialize output file with headers if it doesn't exist
+    if (!fs.existsSync(outputPath)) {
+        await initializeOutputFileWithHeaders(outputPath)
+    }
 
-    return take(uniq(result), 5)
+    const keywords = await readKeywordsFromCSV(inputPath)
+
+    for (const keyword of keywords) {
+        try {
+            const result = await googleKeywordSocialResultsCounts(keyword)
+            await appendResultsToCSV(outputPath, { keyword, ...result })
+            console.log(`Processed and saved results for keyword: ${keyword}`)
+        } catch (error) {
+            console.error(`Error processing keyword ${keyword}: `, error)
+        }
+    }
+
+    console.log('All keywords processed!')
 }
 
 (async function() {
-    const url = "https://herbalvineyards.com/"
-    // const url = "https://drinklmnt.com/"
-    // const url = "https://www.amazon.com/"
-    // const url = "https://www.skillshare.com/"
 
-    const entities = await getWebsiteEntities(url)
+    try {
+        await processKeywordsAndAppendResults('keywords_10.csv', 'resultOfKeywordsSearch.csv')
+    } catch (error) {
+        console.error('Error processing keywords: ', error)
+    }
 
-    console.log(entities)
 })()
+

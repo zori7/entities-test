@@ -9,6 +9,12 @@ const channels = [
     "Pinterest"
 ]
 
+const BATCH_SIZE = 500
+
+const CONCURRENCY_LIMIT = 100
+
 module.exports = {
-    channels
+    channels,
+    BATCH_SIZE,
+    CONCURRENCY_LIMIT,
 }
